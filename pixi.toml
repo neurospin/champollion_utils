@@ -1,0 +1,14 @@
+[project]
+name = "champollion-utils"
+version = "0.1.0"
+description = "Shared utilities for Champollion projects"
+authors = ["Barthélémy Drabczuk <barthelemy.drabczuk@cea.fr>"]
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64"]
+
+[dependencies]
+python = ">=3.10"
+hatchling = "*"  # For building the package
+
+[system-requirements]
+# Add any system-level dependencies
