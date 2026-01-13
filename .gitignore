@@ -1,0 +1,14 @@
+# Python compiled files
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# pixi environments
+.pixi/*
