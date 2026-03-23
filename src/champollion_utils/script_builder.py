@@ -14,6 +14,8 @@ from typing import List, Dict, Any, Optional
 from os.path import dirname, join, exists  # noqa: F401
 from subprocess import run, check_call
 
+from champollion_utils.update_check import check_for_updates
+
 
 class ScriptBuilder(ABC):
     """
@@ -105,6 +107,7 @@ class ScriptBuilder(ABC):
 
         Returns self for chaining to run() or other methods.
         """
+        check_for_updates()
         self.parse_args()
         return self
 
