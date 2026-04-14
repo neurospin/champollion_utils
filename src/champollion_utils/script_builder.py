@@ -202,6 +202,18 @@ class ScriptBuilder(ABC):
         """Run the script. Must be implemented by subclasses."""
         pass
 
+    def before_run(self) -> None:
+        """Called by main() after build/print_args, before run(). Override to add pre-run logic."""
+        pass
+
+    def after_run(self, success: bool) -> None:
+        """Called by main() after run() completes. Override to add post-run logic."""
+        pass
+
     def main(self) -> int:
         """Main entry point for the script."""
-        return self.build().print_args().run()
+        self.build().print_args()
+        self.before_run()
+        exit_code = self.run()
+        self.after_run(success=(exit_code == 0))
+        return exit_code
