@@ -66,8 +66,9 @@ def check_for_updates(timeout: float = 3.0) -> None:
             print(
                 f"\n*** Update available: champollion_pipeline {remote_str} "
                 f"(you have {local_str}). ***\n"
-                f"    Pull the latest version from GitHub to get new features "
-                f"and bug fixes.\n"
+                f"    Run:  pixi run update\n"
+                f"    (If git pull fails due to a pixi.lock conflict, run:\n"
+                f"     git checkout pixi.lock && pixi run update)\n"
             )
     except Exception:
         # No network, private repo, timeout — do not disrupt the script
