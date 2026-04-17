@@ -12,3 +12,6 @@ build/
 
 # pixi environments
 .pixi/*
+
+# OMC
+.omc/
