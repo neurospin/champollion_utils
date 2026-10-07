@@ -14,6 +14,7 @@ from typing import List, Dict, Any, Optional
 from os.path import dirname, join, exists  # noqa: F401
 from subprocess import run, check_call
 
+from champollion_utils.process import init_process
 from champollion_utils.update_check import check_for_updates
 
 
@@ -211,7 +212,12 @@ class ScriptBuilder(ABC):
         pass
 
     def main(self) -> int:
-        """Main entry point for the script."""
+        """Main entry point for the script.
+
+        Sets up logging and the crash hook first, so the update check and
+        argument parsing are covered too.
+        """
+        init_process()
         self.build().print_args()
         self.before_run()
         exit_code = self.run()
