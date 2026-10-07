@@ -1,6 +1,6 @@
 [project]
 name = "champollion-utils"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared utilities for Champollion projects"
 authors = ["Barthélémy Drabczuk <barthelemy.drabczuk@cea.fr>"]
 channels = ["conda-forge"]
@@ -12,3 +12,14 @@ hatchling = "*"  # For building the package
 
 [system-requirements]
 # Add any system-level dependencies
+
+[feature.test.dependencies]
+pytest = "*"
+pytest-cov = "*"
+ruff = "*"
+
+[feature.test.tasks]
+test = "pytest tests"
+
+[environments]
+test = ["test"]
