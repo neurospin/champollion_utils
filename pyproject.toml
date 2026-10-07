@@ -20,3 +20,8 @@ packages = ["src/champollion_utils"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.coverage.run]
+# The crash-hook tests run their scenario in a child python: measure it too.
+patch = ["subprocess"]
+parallel = true
