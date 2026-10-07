@@ -16,3 +16,7 @@ Repository = "github.com/neurospin/champollion_utils"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/champollion_utils"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

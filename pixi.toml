@@ -12,3 +12,14 @@ hatchling = "*"  # For building the package
 
 [system-requirements]
 # Add any system-level dependencies
+
+[feature.test.dependencies]
+pytest = "*"
+pytest-cov = "*"
+ruff = "*"
+
+[feature.test.tasks]
+test = "pytest tests"
+
+[environments]
+test = ["test"]
