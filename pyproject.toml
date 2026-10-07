@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "champollion-utils"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared utilities for Champollion projects (ScriptBuilder, helpers, etc.)"
 authors = [{ name = "Barthélémy Drabczuk", email = "barthelemy.drabczuk@cea.fr" }]
 license = { text = "CeCILL" }
