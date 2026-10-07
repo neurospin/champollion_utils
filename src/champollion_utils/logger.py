@@ -13,12 +13,14 @@ one helper method per level to ``logging.Logger`` and ``logging.LoggerAdapter``:
 
 Importing has no other side effect: no handler is added and no level is set.
 ``setup_logging`` routes records below WARNING to stdout and the others to
-stderr, as ``HH:MM:SS LEVEL    module::qualname | message`` lines.
+stderr, as ``HH:MM:SS LEVEL    module::qualname | message`` lines, and
+``install_excepthook`` logs uncaught exceptions at CRASH.
 """
 
 import logging
 import os
 import sys
+import threading
 import warnings
 from functools import partialmethod
 
@@ -270,3 +272,57 @@ def setup_logging(
     if logger is not logging.getLogger():
         logger.propagate = propagate
     return logger
+
+
+_EXCEPTHOOK_MARKER = "_champollion_excepthook"
+
+
+def install_excepthook(logger: logging.Logger | None = None) -> None:
+    """Log uncaught exceptions at CRASH, in the main thread and in threads.
+
+    An uncaught Exception is logged once with its traceback instead of being
+    printed by the previous hook; other BaseExceptions (KeyboardInterrupt...)
+    still go to the previous hook. Exit statuses are left to the interpreter.
+    Installing again while our hooks are in place does nothing.
+
+    Args:
+        logger: logger receiving the CRASH records; the root logger when None.
+    """
+    log = logger or logging.getLogger()
+
+    if not getattr(sys.excepthook, _EXCEPTHOOK_MARKER, False):
+        previous_excepthook = sys.excepthook
+
+        def excepthook(exc_type, exc_value, exc_tb):
+            if not issubclass(exc_type, Exception):
+                previous_excepthook(exc_type, exc_value, exc_tb)
+                return
+            try:
+                log.crash(
+                    f"uncaught {exc_type.__name__}: {exc_value}",
+                    exc_info=(exc_type, exc_value, exc_tb),
+                )
+            except Exception:  # noqa: BLE001 - never swallow the crash being reported
+                previous_excepthook(exc_type, exc_value, exc_tb)
+
+        setattr(excepthook, _EXCEPTHOOK_MARKER, True)
+        sys.excepthook = excepthook
+
+    if not getattr(threading.excepthook, _EXCEPTHOOK_MARKER, False):
+        previous_thread_excepthook = threading.excepthook
+
+        def thread_excepthook(args):
+            if not issubclass(args.exc_type, Exception):
+                previous_thread_excepthook(args)
+                return
+            name = args.thread.name if args.thread is not None else "<unknown>"
+            try:
+                log.crash(
+                    f"uncaught {args.exc_type.__name__} in thread {name}: {args.exc_value}",
+                    exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+                )
+            except Exception:  # noqa: BLE001 - never swallow the crash being reported
+                previous_thread_excepthook(args)
+
+        setattr(thread_excepthook, _EXCEPTHOOK_MARKER, True)
+        threading.excepthook = thread_excepthook
