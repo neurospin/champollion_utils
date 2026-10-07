@@ -15,3 +15,14 @@ build/
 
 # OMC
 .omc/
+
+# CodeGraph index
+.codegraph/
+
+# ALM task ledger (its own local git repo) and the legacy elm/ ledger
+.alm/
+elm/
+
+# Test artefacts
+.coverage
+.pytest_cache/
