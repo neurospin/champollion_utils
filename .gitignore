@@ -26,3 +26,6 @@ elm/
 # Test artefacts
 .coverage
 .pytest_cache/
+
+# Written by alm (ALM 6) for an in-repo .alm/; our .alm/ is its own git repo, where the rule lives.
+/.gitattributes
