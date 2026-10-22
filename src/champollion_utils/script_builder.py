@@ -9,14 +9,27 @@ import os  # noqa: F401
 import pprint
 import sys
 from abc import ABC, abstractmethod
+from datetime import datetime
 from os.path import dirname, exists, join  # noqa: F401
 from subprocess import check_call, run
 from typing import Any
 
 from champollion_utils.process import init_process
+from champollion_utils.run_log import RunLogCapture
 from champollion_utils.update_check import check_for_updates
 
 logger = logging.getLogger(__name__)
+
+RUN_LOG_OPTION = "--log"
+RUN_LOG_DIR = ".log"
+RUN_LOG_TIMESTAMP_FORMAT = "%Y%m%d-%H%M%S"
+
+
+def _footer_exit_code(value: Any) -> int:
+    """Exit code written to the run-log footer: an int as is, None as 0, anything else as 1."""
+    if isinstance(value, int):
+        return int(value)
+    return 0 if value is None else 1
 
 
 class ScriptBuilder(ABC):
@@ -37,6 +50,7 @@ class ScriptBuilder(ABC):
         self.script_name = script_name
         self.description = description
         self.parser = self._create_parser()
+        self._add_log_option()
         self.args = None
 
     def _create_parser(self) -> argparse.ArgumentParser:
@@ -45,6 +59,18 @@ class ScriptBuilder(ABC):
             prog=self.script_name,
             description=self.description,
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        )
+
+    def _add_log_option(self) -> None:
+        """Add --log [PATH], given to every script: copy the run output into a run-log file."""
+        self.parser.add_argument(
+            RUN_LOG_OPTION,
+            nargs="?",
+            const="",
+            default=None,
+            metavar="PATH",
+            help="Copy the run output (stdout, stderr, child processes) into a run-log file at PATH; "
+            "without PATH, at default_log_path().",
         )
 
     def add_argument(self, *args, **kwargs):
@@ -106,7 +132,12 @@ class ScriptBuilder(ABC):
     def print_args(self):
         """Print the parsed arguments. Returns self for chaining."""
         print(f"{self.script_name} arguments:")
-        pprint.pprint(vars(self.args))
+        shown = {
+            key: value
+            for key, value in vars(self.args).items()
+            if not (key == "log" and value is None)
+        }
+        pprint.pprint(shown)
         return self
 
     def build_command(
@@ -187,6 +218,20 @@ class ScriptBuilder(ABC):
     def run(self) -> int:
         """Run the script. Must be implemented by subclasses."""
 
+    def default_log_path(self) -> str:
+        """Return the run-log path used by a bare --log. Override to choose another path."""
+        stamp = datetime.now().astimezone().strftime(RUN_LOG_TIMESTAMP_FORMAT)
+        return join(".", RUN_LOG_DIR, f"{self.script_name}_{stamp}.log")
+
+    def _resolve_log_path(self) -> str | None:
+        """Path of this run's log from args.log (None: no run log), written back to args.log."""
+        value = getattr(self.args, "log", None)
+        if not isinstance(value, str):
+            return None
+        path = value or self.default_log_path()
+        self.args.log = path
+        return path
+
     def before_run(self) -> None:
         """Called by main() after build/print_args, before run(). Override to add pre-run logic."""
 
@@ -197,11 +242,21 @@ class ScriptBuilder(ABC):
         """Main entry point for the script.
 
         Sets up logging and the crash hook first, so the update check and
-        argument parsing are covered too.
+        argument parsing are covered too. With --log, print_args, before_run and run
+        are copied into the run log; after_run stays outside it.
         """
         init_process()
-        self.build().print_args()
-        self.before_run()
-        exit_code = self.run()
+        self.build()
+        log_path = self._resolve_log_path()
+        if log_path is None:
+            self.print_args()
+            self.before_run()
+            exit_code = self.run()
+        else:
+            with RunLogCapture(log_path) as capture:
+                self.print_args()
+                self.before_run()
+                exit_code = self.run()
+                capture.exit_code = _footer_exit_code(exit_code)
         self.after_run(success=(exit_code == 0))
         return exit_code
