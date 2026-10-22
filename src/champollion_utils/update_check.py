@@ -1,13 +1,13 @@
 """Check whether a newer version of champollion_pipeline is available on GitHub."""
 
+import http.client
 import re
 import sys
 import urllib.request
 from pathlib import Path
 
 _REMOTE_URL = (
-    "https://raw.githubusercontent.com/neurospin/champollion_pipeline"
-    "/main/pixi.toml"
+    "https://raw.githubusercontent.com/neurospin/champollion_pipeline/main/pixi.toml"
 )
 _VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
 
@@ -70,6 +70,6 @@ def check_for_updates(timeout: float = 3.0) -> None:
                 f"    (If git pull fails due to a pixi.lock conflict, run:\n"
                 f"     git checkout pixi.lock && pixi run update)\n"
             )
-    except Exception:
+    except (OSError, ValueError, http.client.HTTPException):
         # No network, private repo, timeout — do not disrupt the script
         pass

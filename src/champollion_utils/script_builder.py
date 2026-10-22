@@ -1,21 +1,35 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 ScriptBuilder: A base class for building flexible command-line scripts.
 Implements the Builder pattern for script configuration.
 """
 
-import os  # noqa: F401
-import sys
-import pprint
 import argparse
+import logging
+import os  # noqa: F401
+import pprint
+import sys
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
-from os.path import dirname, join, exists  # noqa: F401
-from subprocess import run, check_call
+from datetime import datetime
+from os.path import dirname, exists, join  # noqa: F401
+from subprocess import check_call, run
+from typing import Any
 
 from champollion_utils.process import init_process
+from champollion_utils.run_log import RunLogCapture
 from champollion_utils.update_check import check_for_updates
+
+logger = logging.getLogger(__name__)
+
+RUN_LOG_OPTION = "--log"
+RUN_LOG_DIR = ".log"
+RUN_LOG_TIMESTAMP_FORMAT = "%Y%m%d-%H%M%S"
+
+
+def _footer_exit_code(value: Any) -> int:
+    """Exit code written to the run-log footer: an int as is, None as 0, anything else as 1."""
+    if isinstance(value, int):
+        return int(value)
+    return 0 if value is None else 1
 
 
 class ScriptBuilder(ABC):
@@ -36,6 +50,7 @@ class ScriptBuilder(ABC):
         self.script_name = script_name
         self.description = description
         self.parser = self._create_parser()
+        self._add_log_option()
         self.args = None
 
     def _create_parser(self) -> argparse.ArgumentParser:
@@ -43,7 +58,19 @@ class ScriptBuilder(ABC):
         return argparse.ArgumentParser(
             prog=self.script_name,
             description=self.description,
-            formatter_class=argparse.ArgumentDefaultsHelpFormatter
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        )
+
+    def _add_log_option(self) -> None:
+        """Add --log [PATH], given to every script: copy the run output into a run-log file."""
+        self.parser.add_argument(
+            RUN_LOG_OPTION,
+            nargs="?",
+            const="",
+            default=None,
+            metavar="PATH",
+            help="Copy the run output (stdout, stderr, child processes) into a run-log file at PATH; "
+            "without PATH, at default_log_path().",
         )
 
     def add_argument(self, *args, **kwargs):
@@ -51,19 +78,9 @@ class ScriptBuilder(ABC):
         self.parser.add_argument(*args, **kwargs)
         return self
 
-    def add_required_argument(
-        self,
-        name: str,
-        help_text: str,
-        type_: type = str
-    ):
+    def add_required_argument(self, name: str, help_text: str, type_: type = str):
         """Add a required argument. Returns self for chaining."""
-        self.parser.add_argument(
-            name,
-            type=type_,
-            required=True,
-            help=help_text
-        )
+        self.parser.add_argument(name, type=type_, required=True, help=help_text)
         return self
 
     def add_optional_argument(
@@ -72,18 +89,13 @@ class ScriptBuilder(ABC):
         help_text: str,
         default: Any = None,
         type_: type = str,
-        action: Optional[str] = None
+        action: str | None = None,
     ):
         """Add an optional argument. Returns self for chaining."""
         if action:
             self.parser.add_argument(name, action=action, help=help_text)
         else:
-            self.parser.add_argument(
-                name,
-                type=type_,
-                default=default,
-                help=help_text
-            )
+            self.parser.add_argument(name, type=type_, default=default, help=help_text)
         return self
 
     def add_flag(self, name: str, help_text: str):
@@ -91,10 +103,7 @@ class ScriptBuilder(ABC):
         self.parser.add_argument(name, action="store_true", help=help_text)
         return self
 
-    def parse_args(
-        self,
-        args: Optional[List[str]] = None
-    ) -> argparse.Namespace:
+    def parse_args(self, args: list[str] | None = None) -> argparse.Namespace:
         """Parse command-line arguments."""
         self.args = self.parser.parse_args(args)
         return self.args
@@ -112,7 +121,7 @@ class ScriptBuilder(ABC):
         self.parse_args()
         return self
 
-    def validate_paths(self, paths: List[str]) -> bool:
+    def validate_paths(self, paths: list[str]) -> bool:
         """Validate that all paths exist."""
         for path in paths:
             if not exists(path):
@@ -123,16 +132,21 @@ class ScriptBuilder(ABC):
     def print_args(self):
         """Print the parsed arguments. Returns self for chaining."""
         print(f"{self.script_name} arguments:")
-        pprint.pprint(vars(self.args))
+        shown = {
+            key: value
+            for key, value in vars(self.args).items()
+            if not (key == "log" and value is None)
+        }
+        pprint.pprint(shown)
         return self
 
     def build_command(
         self,
         script_path: str,
-        required_args: List[str],
-        optional_args: Dict[str, Any] = None,
-        defaults: Dict[str, Any] = None
-    ) -> List[str]:
+        required_args: list[str],
+        optional_args: dict[str, Any] | None = None,
+        defaults: dict[str, Any] | None = None,
+    ) -> list[str]:
         """
         Build a command to execute another script.
 
@@ -171,7 +185,7 @@ class ScriptBuilder(ABC):
 
         return cmd
 
-    def execute_command(self, cmd: List[str], shell: bool = False) -> int:
+    def execute_command(self, cmd: list[str], shell: bool = False) -> int:
         """
         Execute a command.
 
@@ -189,37 +203,60 @@ class ScriptBuilder(ABC):
                 result = run(
                     " ".join(cmd),
                     shell=True,
-                    executable="/bin/bash"
+                    executable="/bin/bash",
+                    check=False,
                 )
                 return result.returncode
             else:
                 return check_call(cmd)
         except Exception as e:
             print(f"Error running command: {e}")
+            logger.debug("execute_command failed: %r", cmd, exc_info=True)
             return 1
 
     @abstractmethod
     def run(self) -> int:
         """Run the script. Must be implemented by subclasses."""
-        pass
+
+    def default_log_path(self) -> str:
+        """Return the run-log path used by a bare --log. Override to choose another path."""
+        stamp = datetime.now().astimezone().strftime(RUN_LOG_TIMESTAMP_FORMAT)
+        return join(".", RUN_LOG_DIR, f"{self.script_name}_{stamp}.log")
+
+    def _resolve_log_path(self) -> str | None:
+        """Path of this run's log from args.log (None: no run log), written back to args.log."""
+        value = getattr(self.args, "log", None)
+        if not isinstance(value, str):
+            return None
+        path = value or self.default_log_path()
+        self.args.log = path
+        return path
 
     def before_run(self) -> None:
         """Called by main() after build/print_args, before run(). Override to add pre-run logic."""
-        pass
 
     def after_run(self, success: bool) -> None:
         """Called by main() after run() completes. Override to add post-run logic."""
-        pass
 
     def main(self) -> int:
         """Main entry point for the script.
 
         Sets up logging and the crash hook first, so the update check and
-        argument parsing are covered too.
+        argument parsing are covered too. With --log, print_args, before_run and run
+        are copied into the run log; after_run stays outside it.
         """
         init_process()
-        self.build().print_args()
-        self.before_run()
-        exit_code = self.run()
+        self.build()
+        log_path = self._resolve_log_path()
+        if log_path is None:
+            self.print_args()
+            self.before_run()
+            exit_code = self.run()
+        else:
+            with RunLogCapture(log_path) as capture:
+                self.print_args()
+                self.before_run()
+                exit_code = self.run()
+                capture.exit_code = _footer_exit_code(exit_code)
         self.after_run(success=(exit_code == 0))
         return exit_code
