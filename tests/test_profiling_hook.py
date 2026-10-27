@@ -24,6 +24,7 @@ import json
 import multiprocessing
 import os
 import pstats
+import re
 import shutil
 import signal
 import stat
@@ -656,7 +657,13 @@ def test_profiled_script_stdout_matches_unprofiled(tmp_path):
     assert plain.returncode == 0, plain.stderr
     profiled, profile_dir, _driver = _profiled_demo(tmp_path, body)
     assert _sidecars(profile_dir), "profiled run wrote no sidecar"
-    assert profiled.stdout == plain.stdout
+    # The two runs may cross a second boundary: compare without the clock prefix.
+    assert _without_clock(profiled.stdout) == _without_clock(plain.stdout)
+
+
+def _without_clock(text):
+    """Drop the HH:MM:SS prefix that log records put at the start of a line."""
+    return re.sub(r"(?m)^\d{2}:\d{2}:\d{2} ", "", text)
 
 
 def test_make_profiling_env_boot_dir_is_writable_and_under_run_dir(tmp_path):
