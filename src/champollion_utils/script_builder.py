@@ -4,6 +4,7 @@ Implements the Builder pattern for script configuration.
 """
 
 import argparse
+import contextlib
 import logging
 import os  # noqa: F401
 import pprint
@@ -14,7 +15,7 @@ from os.path import dirname, exists, join  # noqa: F401
 from subprocess import check_call, run
 from typing import Any
 
-from champollion_utils.process import init_process
+from champollion_utils.process import PROFILING_MODULE, init_process, start_profiling
 from champollion_utils.run_log import RunLogCapture
 from champollion_utils.update_check import check_for_updates
 
@@ -23,6 +24,10 @@ logger = logging.getLogger(__name__)
 RUN_LOG_OPTION = "--log"
 RUN_LOG_DIR = ".log"
 RUN_LOG_TIMESTAMP_FORMAT = "%Y%m%d-%H%M%S"
+PROFILE_OPTION = "--profile"
+PROFILE_MODE_OPTION = "--profile-mode"
+# Literal copy of champollion_utils.profiling.MODES: importing the profiling package here would load it in every run.
+PROFILE_MODES = ("cpu", "light")
 
 
 def _footer_exit_code(value: Any) -> int:
@@ -51,6 +56,7 @@ class ScriptBuilder(ABC):
         self.description = description
         self.parser = self._create_parser()
         self._add_log_option()
+        self._add_profile_options()
         self.args = None
 
     def _create_parser(self) -> argparse.ArgumentParser:
@@ -71,6 +77,28 @@ class ScriptBuilder(ABC):
             metavar="PATH",
             help="Copy the run output (stdout, stderr, child processes) into a run-log file at PATH; "
             "without PATH, at default_log_path().",
+        )
+
+    def _add_profile_options(self) -> None:
+        """Add --profile DIR and --profile-mode, given to every script, in the "profiling" group.
+
+        Later per-script profiling flags (e.g. --graphic-profiling on GPU scripts) go in
+        self.profiling_group too.
+        """
+        self.profiling_group = self.parser.add_argument_group("profiling")
+        self.profiling_group.add_argument(
+            PROFILE_OPTION,
+            dest="profile",
+            default=None,
+            metavar="DIR",
+            help="Profile this run and its Python children into DIR (same as CHAMPOLLION_PROFILE=DIR).",
+        )
+        self.profiling_group.add_argument(
+            PROFILE_MODE_OPTION,
+            dest="profile_mode",
+            default=None,
+            choices=PROFILE_MODES,
+            help="Profiling mode (default cpu); requires --profile.",
         )
 
     def add_argument(self, *args, **kwargs):
@@ -106,6 +134,11 @@ class ScriptBuilder(ABC):
     def parse_args(self, args: list[str] | None = None) -> argparse.Namespace:
         """Parse command-line arguments."""
         self.args = self.parser.parse_args(args)
+        if (
+            getattr(self.args, "profile_mode", None) is not None
+            and getattr(self.args, "profile", None) is None
+        ):
+            self.parser.error(f"{PROFILE_MODE_OPTION} requires {PROFILE_OPTION}")
         return self.args
 
     def build(self):
@@ -135,7 +168,7 @@ class ScriptBuilder(ABC):
         shown = {
             key: value
             for key, value in vars(self.args).items()
-            if not (key == "log" and value is None)
+            if not (key in ("log", "profile", "profile_mode") and value is None)
         }
         pprint.pprint(shown)
         return self
@@ -247,16 +280,28 @@ class ScriptBuilder(ABC):
         """
         init_process()
         self.build()
+        active = start_profiling(
+            getattr(self.args, "profile", None),
+            getattr(self.args, "profile_mode", None),
+            stage=self.script_name,
+        )
+        segment = (
+            sys.modules[PROFILING_MODULE].profile_segment(self.script_name)
+            if active
+            else contextlib.nullcontext()
+        )
         log_path = self._resolve_log_path()
         if log_path is None:
             self.print_args()
             self.before_run()
-            exit_code = self.run()
+            with segment:
+                exit_code = self.run()
         else:
             with RunLogCapture(log_path) as capture:
                 self.print_args()
                 self.before_run()
-                exit_code = self.run()
+                with segment:
+                    exit_code = self.run()
                 capture.exit_code = _footer_exit_code(exit_code)
         self.after_run(success=(exit_code == 0))
         return exit_code
