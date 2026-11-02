@@ -1,10 +1,10 @@
-"""The champollion_utils manifests declare the 0.4.1 release version.
+"""The champollion_utils manifests declare the 0.4.2 release version.
 
-REQ-SCRIPTBUILDER-BDRABCZUK-68C3CA7D1596: the [project] table of the
-champollion_utils pyproject.toml shall declare version 0.4.1.
+REQ-SCRIPTBUILDER-BDRABCZUK-C95059A5DADD: the [project] table of the
+champollion_utils pyproject.toml shall declare version 0.4.2.
 
-REQ-SCRIPTBUILDER-BDRABCZUK-4E50FC904DEB: the [project] table of the
-champollion_utils pixi.toml shall declare version 0.4.1.
+REQ-SCRIPTBUILDER-BDRABCZUK-0DB35B0589D7: the [project] table of the
+champollion_utils pixi.toml shall declare version 0.4.2.
 
 The ``[project]`` table is read with a small parser rather than ``tomllib``
 because ``requires-python`` still admits Python 3.10, which has no
@@ -34,9 +34,9 @@ def _project_version(manifest: Path) -> str | None:
     return None
 
 
-def test_pyproject_declares_version_0_4_1():
-    assert _project_version(REPO_ROOT / "pyproject.toml") == "0.4.1"
+def test_pyproject_declares_version_0_4_2():
+    assert _project_version(REPO_ROOT / "pyproject.toml") == "0.4.2"
 
 
-def test_pixi_toml_declares_version_0_4_1():
-    assert _project_version(REPO_ROOT / "pixi.toml") == "0.4.1"
+def test_pixi_toml_declares_version_0_4_2():
+    assert _project_version(REPO_ROOT / "pixi.toml") == "0.4.2"
