@@ -31,10 +31,12 @@ import subprocess
 import sys
 import textwrap
 import time
+import types
 from pathlib import Path
 
 import pytest
 
+from champollion_utils import process
 from champollion_utils.script_builder import ScriptBuilder
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
@@ -98,8 +100,10 @@ def _scrubbed_env(**extra: str) -> dict[str, str]:
     return env
 
 
-def _script_builder_driver(tmp_path: Path, run_body: str, return_code: int = 0) -> Path:
-    """Write a ScriptBuilder script whose run() executes `run_body`; return its path."""
+def _script_builder_driver(
+    tmp_path: Path, run_body: str, return_code: int = 0, stage: str = STAGE
+) -> Path:
+    """Write a ScriptBuilder script named `stage` whose run() executes `run_body`; return its path."""
     body = textwrap.indent(textwrap.dedent(run_body).strip() or "pass", " " * 8)
     source = (
         textwrap.dedent(
@@ -132,7 +136,7 @@ def _script_builder_driver(tmp_path: Path, run_body: str, return_code: int = 0) 
                 sys.exit(Demo().main())
             """
         )
-        .replace("STAGE", STAGE)
+        .replace("STAGE", stage)
         .replace("RETURN_CODE", str(return_code))
         .replace("RUN_BODY", body)
     )
@@ -1029,3 +1033,123 @@ def test_script_builder_profile_modes_match_profiling_modes():
     from champollion_utils import script_builder
 
     assert script_builder.PROFILE_MODES == _profiling().MODES
+
+
+# --------------------------------------------------------------------------
+# Boot path: a ScriptBuilder started as a Python child of a profiled process
+# (DEF-SCRIPTBUILDER-BDRABCZUK-5E8BB83081BA, TASK-SCRIPTBUILDER-BDRABCZUK-3CFD8E3A483A)
+# --------------------------------------------------------------------------
+
+BOOT_CHILD_STAGE = "boot-child-stage"
+
+
+def _script_builder_child_of_profiled_parent(tmp_path: Path):
+    """A --profile ScriptBuilder whose run() starts a ScriptBuilder child; return (result, child_pid, child_rc, dir).
+
+    The child gets only the inherited CHAMPOLLION_PROFILE* keys and the boot dir on
+    PYTHONPATH, so its profiling is opened by the boot file, which loads the core as
+    PROFILING_BOOT_MODULE; champollion_utils.profiling stays unimported.
+    """
+    child_dir = tmp_path / "child"
+    child_dir.mkdir()
+    child = _script_builder_driver(
+        child_dir, "stage_work_marker_3e1()", stage=BOOT_CHILD_STAGE
+    )
+    profile_dir = tmp_path / "prof"
+    profile_dir.mkdir()
+    result = _flag_run(
+        tmp_path,
+        ["--profile", str(profile_dir)],
+        f"child = subprocess.Popen([sys.executable, {str(child)!r}])\n"
+        "child.wait()\n"
+        "print(f'CHILD_PID={child.pid}', flush=True)\n"
+        "print(f'CHILD_RC={child.returncode}', flush=True)",
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    child_pid = int(_value_line(result.stdout, "CHILD_PID"))
+    child_rc = int(_value_line(result.stdout, "CHILD_RC"))
+    return result, child_pid, child_rc, profile_dir
+
+
+def test_script_builder_child_of_profiled_parent_exits_with_run_status(tmp_path):
+    """ScriptBuilder.main() returns run()'s exit status as a Python child of a profiled process."""
+    result, _pid, child_rc, _dir = _script_builder_child_of_profiled_parent(tmp_path)
+    assert child_rc == 0, f"child exit {child_rc}; stderr:\n{result.stderr}"
+
+
+def test_script_builder_child_of_profiled_parent_records_script_segment(tmp_path):
+    """ScriptBuilder.main() records a completed segment tagged with the script name in the child."""
+    result, child_pid, _rc, profile_dir = _script_builder_child_of_profiled_parent(
+        tmp_path
+    )
+    sidecars = _sidecars(profile_dir)
+    found = [
+        s
+        for s in sidecars
+        if s.get("pid") == child_pid and s.get("stage") == BOOT_CHILD_STAGE
+    ]
+    assert found, (
+        f"no {BOOT_CHILD_STAGE} segment for child pid {child_pid}: {sidecars}\n"
+        f"stderr:\n{result.stderr}"
+    )
+    assert all(s["complete"] is True for s in found), found
+
+
+def _fake_profiling_modules(monkeypatch, enabled: dict[str, bool]) -> dict[str, object]:
+    """Put a fake module under each name of `enabled` in sys.modules, drop the other name."""
+    fakes = {}
+    for name in (process.PROFILING_MODULE, process.PROFILING_BOOT_MODULE):
+        if name in enabled:
+            fake = types.ModuleType(name)
+            fake.is_profiling_enabled = lambda flag=enabled[name]: flag
+            monkeypatch.setitem(sys.modules, name, fake)
+            fakes[name] = fake
+        else:
+            monkeypatch.delitem(sys.modules, name, raising=False)
+    return fakes
+
+
+@pytest.mark.parametrize(
+    ("enabled", "expected"),
+    [
+        ({process.PROFILING_MODULE: True}, process.PROFILING_MODULE),
+        ({process.PROFILING_BOOT_MODULE: True}, process.PROFILING_BOOT_MODULE),
+        (
+            {process.PROFILING_MODULE: True, process.PROFILING_BOOT_MODULE: True},
+            process.PROFILING_MODULE,
+        ),
+        (
+            {process.PROFILING_MODULE: False, process.PROFILING_BOOT_MODULE: True},
+            process.PROFILING_BOOT_MODULE,
+        ),
+    ],
+    ids=["package-only", "boot-only", "both-enabled", "package-disabled-boot-enabled"],
+)
+def test_active_profiling_returns_first_enabled_module(monkeypatch, enabled, expected):
+    """active_profiling() returns the first enabled module of PROFILING_MODULE, PROFILING_BOOT_MODULE."""
+    fakes = _fake_profiling_modules(monkeypatch, enabled)
+    assert process.active_profiling() is fakes[expected]
+
+
+@pytest.mark.parametrize(
+    "enabled",
+    [{}, {process.PROFILING_MODULE: False, process.PROFILING_BOOT_MODULE: False}],
+    ids=["none-loaded", "both-disabled"],
+)
+def test_active_profiling_returns_none_without_open_session(monkeypatch, enabled):
+    """active_profiling() returns None when no loaded profiling module has an open session."""
+    _fake_profiling_modules(monkeypatch, enabled)
+    assert process.active_profiling() is None
+
+
+@pytest.mark.parametrize(
+    "enabled",
+    [{}, {process.PROFILING_BOOT_MODULE: False}],
+    ids=["none-loaded", "boot-disabled"],
+)
+def test_active_profiling_leaves_sys_modules_unchanged(monkeypatch, enabled):
+    """active_profiling() never imports: the keys of sys.modules stay the same."""
+    _fake_profiling_modules(monkeypatch, enabled)
+    before = set(sys.modules)
+    process.active_profiling()
+    assert set(sys.modules) == before

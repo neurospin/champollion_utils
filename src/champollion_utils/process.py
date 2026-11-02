@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 
 from champollion_utils.logger import install_excepthook, setup_logging
 
@@ -58,6 +59,18 @@ def _drop_profiling_env(pythonpath_before: str | None) -> None:
         os.environ.pop("PYTHONPATH", None)
     else:
         os.environ["PYTHONPATH"] = pythonpath_before
+
+
+def active_profiling() -> ModuleType | None:
+    """The loaded profiling module with an open session (PROFILING_MODULE, then PROFILING_BOOT_MODULE), else None.
+
+    Never imports: only modules already in sys.modules are looked at.
+    """
+    for name in (PROFILING_MODULE, PROFILING_BOOT_MODULE):
+        module = sys.modules.get(name)
+        if module is not None and module.is_profiling_enabled():
+            return module
+    return None
 
 
 def start_profiling(
