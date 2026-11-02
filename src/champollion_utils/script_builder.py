@@ -6,13 +6,13 @@ Implements the Builder pattern for script configuration.
 import argparse
 import contextlib
 import logging
-import os  # noqa: F401
+import os
 import pprint
 import sys
 from abc import ABC, abstractmethod
 from datetime import datetime
 from os.path import dirname, exists, join  # noqa: F401
-from subprocess import check_call, run
+from subprocess import run
 from typing import Any
 
 from champollion_utils.process import active_profiling, init_process, start_profiling
@@ -219,7 +219,10 @@ class ScriptBuilder(ABC):
         return cmd
 
     def execute_command(
-        self, cmd: list[str], shell: bool = False, cwd: str | None = None
+        self,
+        cmd: list[str],
+        shell: bool = False,
+        cwd: str | os.PathLike[str] | None = None,
     ) -> int:
         """
         Execute a command.
@@ -230,7 +233,8 @@ class ScriptBuilder(ABC):
             cwd: Working directory of the command (None: the current one); the process cwd is never changed.
 
         Returns:
-            Return code of the command.
+            Exit status of the command, the child's own in both modes (negative when a signal killed it);
+            1 when the command never started (missing executable or cwd).
         """
         print("Running command:")
         print(" ".join(cmd))
@@ -245,7 +249,8 @@ class ScriptBuilder(ABC):
                 )
                 return result.returncode
             else:
-                return check_call(cmd, cwd=cwd)
+                result = run(cmd, check=False, cwd=cwd)
+                return result.returncode
         except Exception as e:
             print(f"Error running command: {e}")
             logger.debug("execute_command failed: %r", cmd, exc_info=True)
