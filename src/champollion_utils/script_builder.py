@@ -15,7 +15,7 @@ from os.path import dirname, exists, join  # noqa: F401
 from subprocess import check_call, run
 from typing import Any
 
-from champollion_utils.process import PROFILING_MODULE, init_process, start_profiling
+from champollion_utils.process import active_profiling, init_process, start_profiling
 from champollion_utils.run_log import RunLogCapture
 from champollion_utils.update_check import check_for_updates
 
@@ -289,9 +289,10 @@ class ScriptBuilder(ABC):
             getattr(self.args, "profile_mode", None),
             stage=self.script_name,
         )
+        session = active_profiling() if active else None
         segment = (
-            sys.modules[PROFILING_MODULE].profile_segment(self.script_name)
-            if active
+            session.profile_segment(self.script_name)
+            if session is not None
             else contextlib.nullcontext()
         )
         log_path = self._resolve_log_path()
