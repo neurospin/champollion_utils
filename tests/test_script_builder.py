@@ -13,6 +13,7 @@ process's root logger and crash hook.
 
 import argparse
 import os
+import shlex
 import shutil
 import sys
 
@@ -247,10 +248,26 @@ def test_execute_command_prints_and_returns_zero_on_success(capsys):
     assert out.startswith("Running command:\n" + " ".join(cmd) + "\n")
 
 
-def test_execute_command_returns_one_on_nonzero_exit(capsys):
-    cmd = [sys.executable, "-c", "raise SystemExit(4)"]
-    assert DemoScript().execute_command(cmd) == 1
-    assert "Error running command:" in capsys.readouterr().out
+# REQ-SCRIPTBUILDER-BDRABCZUK-84F9453A9485: execute_command returns the exit
+# status of the child process, in shell mode as in non-shell mode (a real
+# Python child; 3 tells the exact status apart from the old collapse to 1).
+
+
+@pytest.mark.parametrize("status", [3, 0])
+@pytest.mark.parametrize("shell", [False, True])
+def test_execute_command_returns_child_exit_status(shell, status):
+    if shell and shutil.which("bash") is None:
+        pytest.skip("bash not available")
+    code = f"import sys; sys.exit({status})"
+    if shell:
+        cmd = [shlex.quote(sys.executable), "-c", shlex.quote(code)]
+    else:
+        cmd = [sys.executable, "-c", code]
+    assert DemoScript().execute_command(cmd, shell=shell) == status
+
+
+# REQ-SCRIPTBUILDER-BDRABCZUK-4D641FDE89D3: a non-shell command naming no
+# existing executable returns 1.
 
 
 def test_execute_command_returns_one_when_executable_missing(tmp_path, capsys):
@@ -300,7 +317,7 @@ def test_execute_command_with_cwd_leaves_parent_cwd_unchanged_on_failure(
 ):
     before = os.getcwd()
     cmd = ["exit 4"] if shell else [sys.executable, "-c", "raise SystemExit(4)"]
-    expected = 4 if shell else 1
+    expected = 4
     assert DemoScript().execute_command(cmd, shell=shell, cwd=tmp_path) == expected
     assert os.getcwd() == before
 
