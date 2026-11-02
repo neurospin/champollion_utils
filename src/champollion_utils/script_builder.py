@@ -218,13 +218,16 @@ class ScriptBuilder(ABC):
 
         return cmd
 
-    def execute_command(self, cmd: list[str], shell: bool = False) -> int:
+    def execute_command(
+        self, cmd: list[str], shell: bool = False, cwd: str | None = None
+    ) -> int:
         """
         Execute a command.
 
         Args:
             cmd: Command to execute.
             shell: Whether to use shell execution.
+            cwd: Working directory of the command (None: the current one); the process cwd is never changed.
 
         Returns:
             Return code of the command.
@@ -238,10 +241,11 @@ class ScriptBuilder(ABC):
                     shell=True,
                     executable="/bin/bash",
                     check=False,
+                    cwd=cwd,
                 )
                 return result.returncode
             else:
-                return check_call(cmd)
+                return check_call(cmd, cwd=cwd)
         except Exception as e:
             print(f"Error running command: {e}")
             logger.debug("execute_command failed: %r", cmd, exc_info=True)

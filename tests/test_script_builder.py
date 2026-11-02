@@ -12,6 +12,7 @@ process's root logger and crash hook.
 """
 
 import argparse
+import os
 import shutil
 import sys
 
@@ -263,6 +264,55 @@ def test_execute_command_shell_returns_exit_status(capsys):
     assert DemoScript().execute_command(["exit", "3"], shell=True) == 3
     assert DemoScript().execute_command(["true"], shell=True) == 0
     assert "Running command:\nexit 3\n" in capsys.readouterr().out
+
+
+# REQ-SCRIPTBUILDER-BDRABCZUK-8A3DDA545A8E: execute_command runs the command in
+# the given cwd, shell and non-shell, without changing the caller's cwd.
+# REQ-SCRIPTBUILDER-BDRABCZUK-BAA24D71878F: a missing cwd directory returns 1.
+
+_WRITE_CWD = "import os; open('cwd.txt', 'w').write(os.getcwd())"
+
+
+def test_execute_command_runs_child_in_cwd(tmp_path):
+    before = os.getcwd()
+    cmd = [sys.executable, "-c", _WRITE_CWD]
+    assert DemoScript().execute_command(cmd, cwd=tmp_path) == 0
+    assert (tmp_path / "cwd.txt").read_text() == os.path.realpath(tmp_path)
+    assert os.getcwd() == before
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_execute_command_shell_runs_child_in_cwd(tmp_path):
+    before = os.getcwd()
+    assert (
+        DemoScript().execute_command(
+            ["pwd -P > cwd.txt"], shell=True, cwd=str(tmp_path)
+        )
+        == 0
+    )
+    assert (tmp_path / "cwd.txt").read_text().strip() == os.path.realpath(tmp_path)
+    assert os.getcwd() == before
+
+
+@pytest.mark.parametrize("shell", [False, True])
+def test_execute_command_with_cwd_leaves_parent_cwd_unchanged_on_failure(
+    tmp_path, shell
+):
+    before = os.getcwd()
+    cmd = ["exit 4"] if shell else [sys.executable, "-c", "raise SystemExit(4)"]
+    expected = 4 if shell else 1
+    assert DemoScript().execute_command(cmd, shell=shell, cwd=tmp_path) == expected
+    assert os.getcwd() == before
+
+
+@pytest.mark.parametrize("shell", [False, True])
+def test_execute_command_missing_cwd_returns_one(tmp_path, shell, capsys):
+    before = os.getcwd()
+    cmd = ["true"] if shell else [sys.executable, "-c", "pass"]
+    missing = tmp_path / "no-such-directory"
+    assert DemoScript().execute_command(cmd, shell=shell, cwd=missing) == 1
+    assert "Error running command:" in capsys.readouterr().out
+    assert os.getcwd() == before
 
 
 # --- hooks and main -----------------------------------------------------------
