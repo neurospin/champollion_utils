@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "champollion-utils"
-version = "0.3.0"
+version = "0.4.0"
 description = "Shared utilities for Champollion projects (ScriptBuilder, helpers, etc.)"
 authors = [{ name = "Barthélémy Drabczuk", email = "barthelemy.drabczuk@cea.fr" }]
 license = { text = "CeCILL" }
@@ -25,3 +25,7 @@ pythonpath = ["src"]
 # The crash-hook tests run their scenario in a child python: measure it too.
 patch = ["subprocess"]
 parallel = true
+
+[tool.coverage.report]
+# --cov overrides run.source, so scope the report to the package here.
+include = ["src/champollion_utils/*"]
