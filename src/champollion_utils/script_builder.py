@@ -15,6 +15,7 @@ from os.path import dirname, exists, join  # noqa: F401
 from subprocess import run
 from typing import Any
 
+from champollion_utils.logger import LOG
 from champollion_utils.process import active_profiling, init_process, start_profiling
 from champollion_utils.run_log import RunLogCapture
 from champollion_utils.update_check import check_for_updates
@@ -158,19 +159,19 @@ class ScriptBuilder(ABC):
         """Validate that all paths exist."""
         for path in paths:
             if not exists(path):
-                print(f"Error: Path does not exist: {path}")
+                logger.error("Error: Path does not exist: %s", path)
                 return False
         return True
 
     def print_args(self):
-        """Print the parsed arguments. Returns self for chaining."""
-        print(f"{self.script_name} arguments:")
+        """Log the parsed arguments at LOG level. Returns self for chaining."""
+        logger.log(LOG, "%s arguments:", self.script_name)
         shown = {
             key: value
             for key, value in vars(self.args).items()
             if not (key in ("log", "profile", "profile_mode") and value is None)
         }
-        pprint.pprint(shown)
+        logger.log(LOG, "%s", pprint.pformat(shown))
         return self
 
     def build_command(
@@ -236,8 +237,9 @@ class ScriptBuilder(ABC):
             Exit status of the command, the child's own in both modes (negative when a signal killed it);
             1 when the command never started (missing executable or cwd).
         """
-        print("Running command:")
-        print(" ".join(cmd))
+        # The child inherits this process's stdout and stderr, so its own output
+        # (e.g. "Fold N/M" progress) reaches the caller unchanged.
+        logger.log(LOG, "Running command: %s", " ".join(cmd))
         try:
             if shell:
                 result = run(
@@ -252,7 +254,7 @@ class ScriptBuilder(ABC):
                 result = run(cmd, check=False, cwd=cwd)
                 return result.returncode
         except Exception as e:
-            print(f"Error running command: {e}")
+            logger.error("Error running command: %s", e)
             logger.debug("execute_command failed: %r", cmd, exc_info=True)
             return 1
 

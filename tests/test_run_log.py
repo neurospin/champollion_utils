@@ -127,12 +127,14 @@ def test_unified_logger_records_reach_the_log_once(log_path):
 
 
 def test_execute_command_line_and_child_output_reach_the_log(log_path):
+    # The command line is a logger record (LOGGING convention), formatted by init_process's handlers.
+    init_process()
     cmd = _child("print('exec-child-marker')")
     with RunLogCapture(log_path):
         assert _CommandRunner("runlog-test", "run-log test").execute_command(cmd) == 0
     lines = _log_lines(log_path)
-    assert lines.count("Running command:") == 1
-    assert lines.count(" ".join(cmd)) == 1
+    assert sum("Running command:" in line for line in lines) == 1
+    assert sum(" ".join(cmd) in line for line in lines) == 1
     assert lines.count("exec-child-marker") == 1
 
 
