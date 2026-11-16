@@ -9,18 +9,46 @@ arrival); their purpose is to make the module's coverage measurable and to
 guard its behaviour while its ruff findings are fixed. The update check and
 init_process are stubbed so no test touches the network or the pytest
 process's root logger and crash hook.
+
+LOGGING convention (pipeline TASK-LOGGING-BDRABCZUK-0D3FE48FC54E): ScriptBuilder's
+own messages are records of the champollion_utils.script_builder logger, asserted
+with caplog, not capsys:
+- REQ-LOGGING-BDRABCZUK-F43C03C63B8D: validate_paths, missing path -> ERROR
+- REQ-LOGGING-BDRABCZUK-5A6B0B17B4DE: print_args -> LOG (22)
+- REQ-LOGGING-BDRABCZUK-BF5F53D2E9D1: execute_command line, before running -> LOG (22)
+- REQ-LOGGING-BDRABCZUK-4FD155594041: execute_command failure -> ERROR
+- REQ-LOGGING-BDRABCZUK-9BF22EA0B3FD: sys.stdout only through logging handlers
 """
 
 import argparse
+import logging
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 
 import pytest
 
 from champollion_utils import script_builder
+from champollion_utils.logger import LOG
 from champollion_utils.script_builder import ScriptBuilder
+
+SCRIPT_BUILDER_LOGGER = "champollion_utils.script_builder"
+
+
+def _builder_records(caplog, level=None):
+    """Records of the champollion_utils.script_builder logger, optionally at one level."""
+    return [
+        record
+        for record in caplog.records
+        if record.name == SCRIPT_BUILDER_LOGGER
+        and (level is None or record.levelno == level)
+    ]
+
+
+def _messages(caplog, level):
+    return [record.getMessage() for record in _builder_records(caplog, level)]
 
 
 class DemoScript(ScriptBuilder):
@@ -139,36 +167,45 @@ def test_build_runs_update_check_parses_sys_argv_and_returns_self(
     assert builder.args.size == 5
 
 
-def test_print_args_prints_header_and_namespace(capsys):
+# REQ-LOGGING-BDRABCZUK-5A6B0B17B4DE
+def test_print_args_logs_header_and_namespace_at_log_level(caplog):
+    caplog.set_level(1, logger=SCRIPT_BUILDER_LOGGER)
     builder = DemoScript().add_optional_argument("--label", "label", default="abc")
     builder.parse_args([])
     assert builder.print_args() is builder
-    out = capsys.readouterr().out
-    assert out.splitlines()[0] == "demo arguments:"
-    assert "{'label': 'abc'}" in out
+    logged = "\n".join(_messages(caplog, LOG))
+    assert logged, "no LOG-level record from print_args"
+    assert logged.splitlines()[0] == "demo arguments:", logged
+    assert "{'label': 'abc'}" in logged
+    # the unset --log option stays hidden, as before
+    assert "'log'" not in logged
 
 
 # --- validate_paths -----------------------------------------------------------
 
 
-def test_validate_paths_true_when_every_path_exists(tmp_path, capsys):
+def test_validate_paths_true_when_every_path_exists(tmp_path, capsys, caplog):
+    caplog.set_level(1, logger=SCRIPT_BUILDER_LOGGER)
     (tmp_path / "f.txt").write_text("")
     assert DemoScript().validate_paths([str(tmp_path), str(tmp_path / "f.txt")])
     assert capsys.readouterr().out == ""
+    assert _builder_records(caplog) == []
 
 
 def test_validate_paths_true_for_empty_list():
     assert DemoScript().validate_paths([]) is True
 
 
-def test_validate_paths_false_and_reports_first_missing_path(tmp_path, capsys):
+# REQ-LOGGING-BDRABCZUK-F43C03C63B8D
+def test_validate_paths_false_and_logs_first_missing_path_at_error(tmp_path, caplog):
+    caplog.set_level(1, logger=SCRIPT_BUILDER_LOGGER)
     missing = tmp_path / "missing"
     other = tmp_path / "other-missing"
     assert (
         DemoScript().validate_paths([str(tmp_path), str(missing), str(other)]) is False
     )
-    out = capsys.readouterr().out
-    assert out == f"Error: Path does not exist: {missing}\n"
+    errors = _messages(caplog, logging.ERROR)
+    assert errors == [f"Error: Path does not exist: {missing}"], errors
 
 
 # --- build_command ------------------------------------------------------------
@@ -241,11 +278,12 @@ def test_build_command_without_defaults_ignores_optional_values():
 # --- execute_command ----------------------------------------------------------
 
 
-def test_execute_command_prints_and_returns_zero_on_success(capsys):
+def test_execute_command_logs_and_returns_zero_on_success(caplog):
+    caplog.set_level(1, logger=SCRIPT_BUILDER_LOGGER)
     cmd = [sys.executable, "-c", "pass"]
     assert DemoScript().execute_command(cmd) == 0
-    out = capsys.readouterr().out
-    assert out.startswith("Running command:\n" + " ".join(cmd) + "\n")
+    assert any(" ".join(cmd) in message for message in _messages(caplog, LOG))
+    assert _messages(caplog, logging.ERROR) == []
 
 
 # REQ-SCRIPTBUILDER-BDRABCZUK-84F9453A9485: execute_command returns the exit
@@ -266,21 +304,59 @@ def test_execute_command_returns_child_exit_status(shell, status):
     assert DemoScript().execute_command(cmd, shell=shell) == status
 
 
+# REQ-LOGGING-BDRABCZUK-BF5F53D2E9D1
+def test_execute_command_logs_command_line_at_log_level_before_running(
+    monkeypatch, caplog
+):
+    caplog.set_level(1, logger=SCRIPT_BUILDER_LOGGER)
+    cmd = [sys.executable, "-c", "pass"]
+    seen_before_run = []
+
+    def fake_run(*_args, **_kwargs):
+        seen_before_run.extend(_messages(caplog, LOG))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(script_builder, "run", fake_run)
+    assert DemoScript().execute_command(cmd) == 0
+    assert any(" ".join(cmd) in message for message in seen_before_run), seen_before_run
+
+
 # REQ-SCRIPTBUILDER-BDRABCZUK-4D641FDE89D3: a non-shell command naming no
 # existing executable returns 1.
 
 
-def test_execute_command_returns_one_when_executable_missing(tmp_path, capsys):
+# REQ-LOGGING-BDRABCZUK-4FD155594041
+def test_execute_command_returns_one_and_logs_error_when_executable_missing(
+    tmp_path, caplog
+):
+    caplog.set_level(1, logger=SCRIPT_BUILDER_LOGGER)
     cmd = [str(tmp_path / "no-such-executable")]
     assert DemoScript().execute_command(cmd) == 1
-    assert "Error running command:" in capsys.readouterr().out
+    errors = _messages(caplog, logging.ERROR)
+    assert any("No such file or directory" in message for message in errors), errors
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
-def test_execute_command_shell_returns_exit_status(capsys):
+def test_execute_command_shell_returns_exit_status(caplog):
+    caplog.set_level(1, logger=SCRIPT_BUILDER_LOGGER)
     assert DemoScript().execute_command(["exit", "3"], shell=True) == 3
     assert DemoScript().execute_command(["true"], shell=True) == 0
-    assert "Running command:\nexit 3\n" in capsys.readouterr().out
+    assert any("exit 3" in message for message in _messages(caplog, LOG))
+
+
+# REQ-LOGGING-BDRABCZUK-9BF22EA0B3FD
+def test_script_builder_methods_write_nothing_to_stdout_without_handlers(
+    monkeypatch, tmp_path, capsys
+):
+    # No handler sees the records: only a direct write could reach sys.stdout.
+    monkeypatch.setattr(logging.getLogger(SCRIPT_BUILDER_LOGGER), "propagate", False)
+    builder = DemoScript().add_optional_argument("--label", "label", default="abc")
+    builder.parse_args([])
+    builder.print_args()
+    builder.validate_paths([str(tmp_path / "missing")])
+    builder.execute_command([sys.executable, "-c", "pass"])
+    builder.execute_command([str(tmp_path / "no-such-executable")])
+    assert capsys.readouterr().out == ""
 
 
 # REQ-SCRIPTBUILDER-BDRABCZUK-8A3DDA545A8E: execute_command runs the command in
@@ -323,12 +399,14 @@ def test_execute_command_with_cwd_leaves_parent_cwd_unchanged_on_failure(
 
 
 @pytest.mark.parametrize("shell", [False, True])
-def test_execute_command_missing_cwd_returns_one(tmp_path, shell, capsys):
+def test_execute_command_missing_cwd_returns_one(tmp_path, shell, caplog):
+    caplog.set_level(1, logger=SCRIPT_BUILDER_LOGGER)
     before = os.getcwd()
     cmd = ["true"] if shell else [sys.executable, "-c", "pass"]
     missing = tmp_path / "no-such-directory"
     assert DemoScript().execute_command(cmd, shell=shell, cwd=missing) == 1
-    assert "Error running command:" in capsys.readouterr().out
+    errors = _messages(caplog, logging.ERROR)
+    assert any("Error running command:" in message for message in errors), errors
     assert os.getcwd() == before
 
 
@@ -362,8 +440,9 @@ class HookedScript(DemoScript):
 
 @pytest.mark.parametrize(("exit_code", "success"), [(0, True), (5, False)])
 def test_main_runs_steps_in_order_and_returns_exit_code(
-    monkeypatch, no_update_check, capsys, exit_code, success
+    monkeypatch, no_update_check, caplog, exit_code, success
 ):
+    caplog.set_level(1, logger=SCRIPT_BUILDER_LOGGER)
     monkeypatch.setattr(sys, "argv", ["demo"])
     script = HookedScript(exit_code=exit_code)
     monkeypatch.setattr(
@@ -379,4 +458,4 @@ def test_main_runs_steps_in_order_and_returns_exit_code(
         ("after_run", success),
     ]
     assert no_update_check == [1]
-    assert "demo arguments:" in capsys.readouterr().out
+    assert any("demo arguments:" in message for message in _messages(caplog, LOG))
