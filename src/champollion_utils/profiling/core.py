@@ -43,6 +43,9 @@ LOGGER_NAME = "champollion_utils.profiling"
 BOOT_MODULE_NAME = "_champollion_profiling_core"
 SIDECAR_SCHEMA = 1
 RUN_SCHEMA = 1
+# Profiling files hold argv and cwd (subject ids, data paths): owner-only, whatever the umask.
+RUN_DIR_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
 
 logger = logging.getLogger(LOGGER_NAME)
 
@@ -153,8 +156,9 @@ def get_boot_dir(run_dir: Path) -> Path:
 
 def write_boot_dir(run_dir: Path) -> Path:
     """Create the boot dir of ``run_dir`` with its sitecustomize.py (kept when already there); return the dir."""
+    _ensure_run_dir(Path(run_dir))
     boot = get_boot_dir(run_dir)
-    boot.mkdir(parents=True, exist_ok=True)
+    boot.mkdir(exist_ok=True)
     target = boot / "sitecustomize.py"
     if not target.is_file():
         source = _BOOT_TEMPLATE.format(
@@ -189,10 +193,32 @@ def make_profiling_env(
 # ---------------------------------------------------------------------------
 
 
+def _ensure_run_dir(run_dir: Path) -> None:
+    """Create ``run_dir`` (and missing parents) with mode RUN_DIR_MODE; an existing one is left as is."""
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        run_dir.mkdir(mode=RUN_DIR_MODE)
+    except FileExistsError:
+        return
+    os.chmod(run_dir, RUN_DIR_MODE)
+
+
+def _open_private(path: Path) -> int:
+    """Open ``path`` for writing (created or truncated) with mode PRIVATE_FILE_MODE; return the descriptor."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE_MODE)
+    try:
+        os.fchmod(fd, PRIVATE_FILE_MODE)
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
 def _write_atomic(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` through a temporary file and os.replace."""
+    """Write ``text`` to ``path`` (mode PRIVATE_FILE_MODE) through a temporary file and os.replace."""
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(text, encoding="utf-8")
+    with os.fdopen(_open_private(tmp), "w", encoding="utf-8") as handle:
+        handle.write(text)
     os.replace(tmp, path)
 
 
@@ -332,9 +358,9 @@ def _close_segment(exit_path: str) -> None:
         sidecar["children_cpu_sys_s"] = end.children_system - start.children_system
         sidecar["maxrss_kb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         if profiler is not None:
-            profiler.dump_stats(
-                str(_session.run_dir / "proc" / sidecar["profile_file"])
-            )
+            dump = _session.run_dir / "proc" / sidecar["profile_file"]
+            os.close(_open_private(dump))  # dump_stats truncates it and keeps its mode
+            profiler.dump_stats(str(dump))
         sidecar["complete"] = True
         sidecar["exit_path"] = exit_path
         _write_sidecar(segment)
